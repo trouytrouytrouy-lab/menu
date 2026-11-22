@@ -129,6 +129,7 @@ int g_cfg_money_idx = 2, g_cfg_weather_idx = 0, g_cfg_hour = 12, g_cfg_minute = 
 static void player_page(void);
 static void weapon_page(void);
 static void horse_page(void);
+static void guard_page(void);
 static void give_all_weapons(void);
 static void max_upgrade_all_weapons(void);
 static void give_all_ammo(void);
@@ -216,6 +217,197 @@ static void apply_player_protection(uint64_t base, int player, int ped) {
   apply_ped_protection(base, &s_player_protection, ped, g_feat.god, g_feat.unlimited_stamina);
 }
 
+// ---- bodyguard / ped state & helpers ----
+#define MAX_GUARDS 8
+
+static const uint32_t GUARD_PED_HASHES[] = {
+  0x0E05302Fu, // lawman / deputy style ped hash (verify)
+  0x60A6D6C0u, // gang gunman style ped hash (verify)
+  0x2B9C5C84u, // townsman / armed npc hash (verify)
+};
+static const char *const GUARD_PED_NAMES[] = {
+  "Lawman",
+  "Gang Gunman",
+  "Townsman",
+};
+#define NGUARD_PEDS (sizeof(GUARD_PED_HASHES) / sizeof(GUARD_PED_HASHES[0]))
+
+static const uint32_t GUARD_GUN_HASHES[] = {
+  0x7BBD1FF6u, // revolver schofield
+  0xA84762ECu, // repeater winchester
+  0x772C8DD6u, // rifle boltaction
+  0x31B7B9FEu, // shotgun pump
+};
+static const char *const GUARD_GUN_NAMES[] = {
+  "Schofield Revolver",
+  "Winchester Repeater",
+  "Bolt Action Rifle",
+  "Pump Shotgun",
+};
+#define NGUARD_GUNS (sizeof(GUARD_GUN_HASHES) / sizeof(GUARD_GUN_HASHES[0]))
+
+static int s_guard_ped_idx = 0;
+static int s_guard_gun_idx = 0;
+static int s_guards[MAX_GUARDS];
+static int s_guard_count = 0;
+
+static void prune_guards(void) {
+  int write = 0;
+  for (int i = 0; i < s_guard_count; i++) {
+    if (entity_exists(g_base, s_guards[i])) {
+      s_guards[write++] = s_guards[i];
+    }
+  }
+  s_guard_count = write;
+}
+
+static void register_guard(int ped) {
+  if (!ped || !entity_exists(g_base, ped)) return;
+  prune_guards();
+  for (int i = 0; i < s_guard_count; i++) {
+    if (s_guards[i] == ped) return;
+  }
+  if (s_guard_count < MAX_GUARDS) {
+    s_guards[s_guard_count++] = ped;
+  }
+}
+
+static void configure_ped_as_guard(int ped, int slot_index) {
+  int player_ped = cur_ped();
+  if (!player_ped || !entity_exists(g_base, ped)) return;
+
+  nat_call(g_base, OFF_SET_BLOCKING_OF_NON_TEMPORARY_EVENTS, (uint64_t[]){(uint32_t)ped, 1}, 2);
+  nat_call(g_base, OFF_SET_PED_COMBAT_ABILITY, (uint64_t[]){(uint32_t)ped, 2}, 2);
+  nat_call(g_base, OFF_SET_PED_COMBAT_ATTRIBUTES, (uint64_t[]){(uint32_t)ped, 5, 1}, 3);
+  nat_call(g_base, OFF_SET_PED_COMBAT_ATTRIBUTES, (uint64_t[]){(uint32_t)ped, 46, 1}, 3);
+
+  float side = ((slot_index % 2 == 0) ? -1.5f : 1.5f) * (1 + (slot_index / 2));
+  float back = -2.2f - (float)(slot_index / 2) * 1.2f;
+
+  nat_call(g_base, OFF_TASK_FOLLOW_TO_OFFSET_OF_ENTITY,
+    (uint64_t[]){
+      (uint32_t)ped, (uint32_t)player_ped,
+      fu(side), fu(back), fu(0.0f),
+      fu(2.0f), (uint64_t)-1, fu(2.5f), 1
+    }, 9);
+
+  if (g_feat.guard_god_mode) {
+    set_entity_god(g_base, ped, 1);
+  }
+}
+
+static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float side_dist) {
+  int player_ped = cur_ped();
+  if (!player_ped || !model_hash) return 0;
+
+  ScrVec3 pos;
+  memset(&pos, 0, sizeof pos);
+  nat_call(g_base, OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS,
+    (uint64_t[]){(uint32_t)player_ped, fu(side_dist), fu(forward_dist), fu(0.0f), (uint64_t)(uintptr_t)&pos}, 5);
+
+  nat_call(g_base, OFF_REQUEST_MODEL, (uint64_t[]){model_hash}, 1);
+
+  int loaded = 0;
+  for (int tries = 0; tries < 120; tries++) {
+    if ((int)nat_call(g_base, OFF_HAS_MODEL_LOADED, (uint64_t[]){model_hash}, 1)) {
+      loaded = 1;
+      break;
+    }
+  }
+  if (!loaded) {
+    ui_notify("ped model failed to load");
+    return 0;
+  }
+
+  int ped = (int)nat_call(g_base, OFF_CREATE_PED,
+    (uint64_t[]){
+      model_hash, fu(pos.x), fu(pos.y), fu(pos.z),
+      fu(0.0f), 1, 1, 0, 0
+    }, 9);
+
+  nat_call(g_base, OFF_SET_MODEL_AS_NO_LONGER_NEEDED, (uint64_t[]){model_hash}, 1);
+  return ped;
+}
+
+static void give_one_weapon(int ped, uint32_t w, int ammo, int inHand) {
+  nat_call(g_base, OFF_GIVE_WEAPON_TO_PED,
+    (uint64_t[]){(uint32_t)ped, w, (uint32_t)ammo, inHand ? 1u : 0u, inHand ? 0u : 1u,
+                 0, 0, fu(0.5f), fu(1.0f), ADD_REASON_DEFAULT, 1, fu(0.0f), 0}, 13);
+  nat_call(g_base, OFF_SET_PED_AMMO, (uint64_t[]){(uint32_t)ped, w, (uint32_t)ammo}, 3);
+}
+
+static void action_spawn_ped_id(int id) {
+  (void)id;
+  prune_guards();
+  if (s_guard_count >= MAX_GUARDS) {
+    ui_notify("max guards reached");
+    return;
+  }
+  uint32_t hash = GUARD_PED_HASHES[s_guard_ped_idx];
+  int ped = spawn_ped_near_player(hash, 2.5f, (s_guard_count % 2 == 0) ? 1.2f : -1.2f);
+  if (!ped || !entity_exists(g_base, ped)) {
+    ui_notify("failed to spawn ped");
+    return;
+  }
+
+  register_guard(ped);
+  configure_ped_as_guard(ped, s_guard_count - 1);
+  give_one_weapon(ped, GUARD_GUN_HASHES[s_guard_gun_idx], 500, 1);
+  nat_call(g_base, OFF_SET_CURRENT_PED_WEAPON,
+    (uint64_t[]){(uint32_t)ped, GUARD_GUN_HASHES[s_guard_gun_idx], 1, 0, 0, 0}, 6);
+
+  ui_notify("ped spawned");
+}
+
+static void action_spawn_ped(void) {
+  action_spawn_ped_id(0);
+}
+
+static void action_set_ped_guard(void) {
+  prune_guards();
+  if (s_guard_count == 0) {
+    action_spawn_ped();
+    return;
+  }
+  for (int i = 0; i < s_guard_count; i++) {
+    configure_ped_as_guard(s_guards[i], i);
+  }
+  ui_notify("set as guard");
+}
+
+static void action_give_guard_guns(void) {
+  prune_guards();
+  if (s_guard_count <= 0) {
+    ui_notify("no guard peds active");
+    return;
+  }
+  uint32_t gun = GUARD_GUN_HASHES[s_guard_gun_idx];
+  for (int i = 0; i < s_guard_count; i++) {
+    int ped = s_guards[i];
+    if (!entity_exists(g_base, ped)) continue;
+    give_one_weapon(ped, gun, 500, 1);
+    nat_call(g_base, OFF_SET_CURRENT_PED_WEAPON,
+      (uint64_t[]){(uint32_t)ped, gun, 1, 0, 0, 0}, 6);
+  }
+  ui_notify("guns given to guard ped(s)");
+}
+
+static void action_clear_guards(void) {
+  for (int i = 0; i < s_guard_count; i++) {
+    int ped = s_guards[i];
+    if (entity_exists(g_base, ped)) {
+      set_entity_god(g_base, ped, 0);
+      nat_call(g_base, OFF_DELETE_PED, (uint64_t[]){(uint64_t)(uintptr_t)&s_guards[i]}, 1);
+    }
+  }
+  s_guard_count = 0;
+  ui_notify("guards cleared");
+}
+
+void features_cleanup(void) {
+  action_clear_guards();
+}
+
 // ---- menu layout ----
 
 void features_build_root(void) {
@@ -223,6 +415,7 @@ void features_build_root(void) {
   ui_submenu("Player", player_page);
   ui_submenu("Weapon Options", weapon_page);
   ui_submenu("Horse Options", horse_page);
+  ui_submenu("Bodyguard / Peds", guard_page);
   ui_submenu("Money", money_page);
   ui_submenu("Weather & Time", worldtime_page);
   ui_submenu("Settings", settings_page);
@@ -280,6 +473,18 @@ static void horse_page(void) {
   ui_action("Bonding Level Max", bonding_max);
   ui_action("Upgrade Saddle & Tack", horse_shop);
 }
+
+static void guard_page(void) {
+  ui_title("Bodyguard / Peds");
+  ui_scroll_opt_apply("Ped Type", &s_guard_ped_idx, GUARD_PED_NAMES, (int)NGUARD_PEDS, action_spawn_ped_id, 0);
+  ui_action("Spawn Ped", action_spawn_ped);
+  ui_action("Set Ped Guard", action_set_ped_guard);
+  ui_scroll_opt("Guard Gun", &s_guard_gun_idx, GUARD_GUN_NAMES, (int)NGUARD_GUNS);
+  ui_action("Give Guard Ped(s) Guns", action_give_guard_guns);
+  ui_toggle("Guard God Mode", &g_feat.guard_god_mode);
+  ui_action("Clear All Guards", action_clear_guards);
+}
+
 // ---- per-frame apply ----
 
 void features_apply_all(uint64_t base) {
@@ -290,6 +495,13 @@ void features_apply_all(uint64_t base) {
   if (!ped) ped = (int)nat_call(base, OFF_GET_PLAYER_PED, (uint64_t[]){0xFF}, 1);
 
   apply_player_protection(base, player, ped);
+
+  // sync guard god mode toggle on tracked guards
+  for (int i = 0; i < s_guard_count; i++) {
+    if (entity_exists(base, s_guards[i])) {
+      set_entity_god(base, s_guards[i], g_feat.guard_god_mode ? 1 : 0);
+    }
+  }
 
   // remove satchel - self-limiting strip chain, gated on the component check
   if (g_feat.no_satchel && ped &&
@@ -315,8 +527,7 @@ void features_apply_all(uint64_t base) {
     nat_call(base, OFF__SET_LAW_DISABLED, (uint64_t[]){0}, 1);
   }
 
-  // super run - move_rate_override is animation-only (did nothing). a forward impulse each frame
-  // while actually running is what speeds the player up. y=+20 is entity-local forward, flag 1 = impulse.
+  // super run
   if (g_feat.super_run && ped &&
       !(int)nat_call(base, OFF_IS_PED_RAGDOLL, (uint64_t[]){(uint32_t)ped}, 1) &&
       ((int)nat_call(base, OFF_IS_PED_RUNNING,   (uint64_t[]){(uint32_t)ped}, 1) ||
@@ -325,7 +536,7 @@ void features_apply_all(uint64_t base) {
       (uint64_t[]){(uint32_t)ped, 1, fu(0.0f), fu(20.0f), fu(0.0f), fu(0.0f), fu(0.0f), fu(0.0f),
                    1, 1, 1, 1, 0, 1}, 14);
   if (g_feat.super_swim) nat_call(base, OFF_SET_SWIM_MULTIPLIER_FOR_PLAYER, (uint64_t[]){(uint32_t)player, fu(1.49f)}, 2);
-  if (g_feat.super_jump) nat_call(base, OFF_SET_SUPER_JUMP_THIS_FRAME, (uint64_t[]){(uint32_t)player}, 1); // weak in rdr2
+  if (g_feat.super_jump) nat_call(base, OFF_SET_SUPER_JUMP_THIS_FRAME, (uint64_t[]){(uint32_t)player}, 1);
 
   // invisibility
   if (g_feat.invisible)       nat_call(base, OFF_SET_ENTITY_VISIBLE, (uint64_t[]){(uint32_t)ped, 0}, 2);
@@ -335,17 +546,15 @@ void features_apply_all(uint64_t base) {
   if (g_feat.slow_motion)     nat_call(base, OFF_SET_TIME_SCALE, (uint64_t[]){fu(0.3f)}, 1);
   else if (prev.slow_motion)  nat_call(base, OFF_SET_TIME_SCALE, (uint64_t[]){fu(1.0f)}, 1);
 
-  // unlimited deadeye - _MODIFY_INFINITE_TRAIL_VISION blocks drain on both deadeye and
-  // eagle eye like the engine's own cheat does. persist flag is on the player so it only
-  // needs an edge call; pin the core each frame so the gauge reads full.
+  // unlimited deadeye
   if (g_feat.unlimited_deadeye && ped) {
     if (s_deadeye_player >= 0 && s_deadeye_player != player)
-      nat_call(base, OFF__MODIFY_INFINITE_TRAIL_VISION, (uint64_t[]){(uint32_t)s_deadeye_player, 0}, 2); // release old player
+      nat_call(base, OFF__MODIFY_INFINITE_TRAIL_VISION, (uint64_t[]){(uint32_t)s_deadeye_player, 0}, 2);
     if (s_deadeye_player != player) {
       nat_call(base, OFF__MODIFY_INFINITE_TRAIL_VISION, (uint64_t[]){(uint32_t)player, 1}, 2);
       s_deadeye_player = player;
     }
-    nat_call(base, OFF__SET_ATTRIBUTE_CORE_VALUE, (uint64_t[]){(uint32_t)ped, 2, 100}, 3); // core 2 = deadeye
+    nat_call(base, OFF__SET_ATTRIBUTE_CORE_VALUE, (uint64_t[]){(uint32_t)ped, 2, 100}, 3);
   } else if (s_deadeye_player >= 0) {
     nat_call(base, OFF__MODIFY_INFINITE_TRAIL_VISION, (uint64_t[]){(uint32_t)s_deadeye_player, 0}, 2);
     s_deadeye_player = -1;
@@ -354,8 +563,8 @@ void features_apply_all(uint64_t base) {
   // player ignore
   if (g_feat.player_ignore)     nat_call(base, OFF_SET_EVERYONE_IGNORE_PLAYER, (uint64_t[]){(uint32_t)player, 1}, 2);
   else if (prev.player_ignore)  nat_call(base, OFF_SET_EVERYONE_IGNORE_PLAYER, (uint64_t[]){(uint32_t)player, 0}, 2);
-  // infinite ammo - clip native stops reloads; reserve ammo is PER-WEAPON (hash arg), so loop
-  // over the weapon set. the old call passed weaponHash 0 which targets nothing, so reserve kept draining.
+
+  // infinite ammo
   if (g_feat.infinite_ammo && ped) {
     nat_call(base, OFF__SET_PED_INFINITE_AMMO_CLIP, (uint64_t[]){(uint32_t)ped, 1}, 2);
     for (unsigned i = 0; i < NWEAPONS; i++)
@@ -366,17 +575,17 @@ void features_apply_all(uint64_t base) {
       nat_call(base, OFF_SET_PED_INFINITE_AMMO, (uint64_t[]){(uint32_t)ped, 0, WEAPONS[i]}, 3);
   }
 
-  // one hit kill - damage modifier (simpler than looping instant-kill groups)
+  // one hit kill
   if (g_feat.one_hit_kill)      nat_call(base, OFF_SET_PLAYER_WEAPON_DAMAGE_MODIFIER, (uint64_t[]){(uint32_t)player, fu(1000.0f)}, 2);
   else if (prev.one_hit_kill)   nat_call(base, OFF_SET_PLAYER_WEAPON_DAMAGE_MODIFIER, (uint64_t[]){(uint32_t)player, fu(1.0f)}, 2);
 
-  // rapid fire - experimental, these likely only govern ai firing. VERIFY
+  // rapid fire
   if (g_feat.rapid_fire) {
     nat_call(base, OFF_SET_PED_SHOOT_RATE, (uint64_t[]){(uint32_t)ped, 1000}, 2);
     nat_call(base, OFF_SET_PED_FIRING_PATTERN, (uint64_t[]){(uint32_t)ped, FIRING_PATTERN_FULL_AUTO}, 2);
   }
 
-  // perfect accuracy - experimental, affects auto-aim/deadeye not manual aim. VERIFY
+  // perfect accuracy
   if (g_feat.perfect_accuracy) {
     nat_call(base, OFF__SET_PLAYER_TOTAL_ACCURACY_MODIFIER, (uint64_t[]){(uint32_t)player, fu(100.0f)}, 2);
     nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
@@ -384,12 +593,11 @@ void features_apply_all(uint64_t base) {
     nat_call(base, OFF__SET_PLAYER_TOTAL_ACCURACY_MODIFIER, (uint64_t[]){(uint32_t)player, fu(1.0f)}, 2);
   }
 
-  // explosive bullet - detonate at each NEW shot impact. the last-impact coord persists, so
-  // dedupe or it re-blasts every frame at the same spot. type 25 = EXP_TAG_DYNAMITE (4 was molotov).
+  // explosive bullet
   {
     static float eb_lx, eb_ly, eb_lz; static int eb_primed;
     if (g_feat.explosive_bullet && ped) {
-      if (!prev.explosive_bullet) eb_primed = 0;   // fresh enable: baseline off a stale impact
+      if (!prev.explosive_bullet) eb_primed = 0;
       ScrVec3 c; memset(&c, 0, sizeof c);
       int hit = (int)nat_call(base, OFF_GET_PED_LAST_WEAPON_IMPACT_COORD,
                               (uint64_t[]){(uint32_t)ped, (uint64_t)(uintptr_t)&c}, 2);
@@ -404,12 +612,11 @@ void features_apply_all(uint64_t base) {
     }
   }
 
-  // teleport gun - jump to each NEW shot impact. the last-impact coord persists, so without a
-  // dedupe it yanks you back every frame; +1z keeps you from clipping into the ground.
+  // teleport gun
   {
     static float tg_lx, tg_ly, tg_lz; static int tg_primed;
     if (g_feat.teleport_gun && ped) {
-      if (!prev.teleport_gun) tg_primed = 0;   // fresh enable: baseline, don't warp on a stale impact
+      if (!prev.teleport_gun) tg_primed = 0;
       ScrVec3 c; memset(&c, 0, sizeof c);
       int hit = (int)nat_call(base, OFF_GET_PED_LAST_WEAPON_IMPACT_COORD,
                               (uint64_t[]){(uint32_t)ped, (uint64_t)(uintptr_t)&c}, 2);
@@ -435,7 +642,6 @@ void features_apply_all(uint64_t base) {
   }
   int protectedHorse = mount;
   if (!protectedHorse && ped && (g_feat.horse_god || g_feat.horse_unlimited_stamina)) {
-    // keep the last horse protected after dismounting
     protectedHorse = s_horse_protection.ped;
     if (!entity_exists(base, protectedHorse))
       protectedHorse = (int)nat_call(base, OFF__GET_SADDLE_HORSE_FOR_PLAYER, (uint64_t[]){(uint32_t)player}, 1);
@@ -444,12 +650,9 @@ void features_apply_all(uint64_t base) {
                        g_feat.horse_god, g_feat.horse_unlimited_stamina);
 
   if (mount) {
-    // invisibility - SET_ENTITY_VISIBLE(false) cascades to the attached rider and hides the player;
-    // alpha fades only the mount's own drawables, so the rider stays visible.
     if (g_feat.horse_invisible)       nat_call(base, OFF_SET_ENTITY_ALPHA, (uint64_t[]){(uint32_t)mount, 0, 0}, 3);
     else if (prev.horse_invisible)    nat_call(base, OFF_RESET_ENTITY_ALPHA, (uint64_t[]){(uint32_t)mount}, 1);
 
-    // super run - impulse each frame while the horse is actually galloping (move-rate was anim-only)
     if (g_feat.horse_super_run &&
         !(int)nat_call(base, OFF_IS_PED_RAGDOLL, (uint64_t[]){(uint32_t)mount}, 1) &&
         ((int)nat_call(base, OFF_IS_PED_RUNNING,   (uint64_t[]){(uint32_t)mount}, 1) ||
@@ -459,351 +662,9 @@ void features_apply_all(uint64_t base) {
                      1, 1, 1, 1, 0, 1}, 14);
   }
 
-  // freeze time - pause/unpause the in-game clock on the toggle edge
+  // freeze time
   if (g_feat.freeze_time && !prev.freeze_time) nat_call(base, OFF_PAUSE_CLOCK, (uint64_t[]){1, 0}, 2);
   else if (!g_feat.freeze_time && prev.freeze_time) nat_call(base, OFF_PAUSE_CLOCK, (uint64_t[]){0, 0}, 2);
 
   prev = g_feat;
-}
-// ---- one-shot actions ----
-
-// one corrected GIVE_WEAPON_TO_PED call. inHand=1 forces it drawn, else holstered.
-// args: ped, weapon, ammo, forceInHand, forceInHolster, attachPoint(0=primary),
-//       allowMultipleCopies(0 so re-give does not stack), 0.5f, 1.0f, addReason(must be valid), ignoreUnlocks, degradation, p12
-static void give_one_weapon(int ped, uint32_t w, int ammo, int inHand) {
-  // 11th arg = bIgnoreUnlocks MUST be 1: with 0, story/unlock-locked weapons are silently
-  // rejected (that was the partial give-all bug).
-  nat_call(g_base, OFF_GIVE_WEAPON_TO_PED,
-    (uint64_t[]){(uint32_t)ped, w, (uint32_t)ammo, inHand ? 1u : 0u, inHand ? 0u : 1u,
-                 0, 0, fu(0.5f), fu(1.0f), ADD_REASON_DEFAULT, 1, fu(0.0f), 0}, 13);
-  nat_call(g_base, OFF_SET_PED_AMMO, (uint64_t[]){(uint32_t)ped, w, (uint32_t)ammo}, 3);
-}
-
-static void give_all_weapons(void) {
-  int ped = cur_ped(); if (!ped) return;
-  for (unsigned i = 0; i < NWEAPONS; i++)
-    give_one_weapon(ped, WEAPONS[i], 500, 0);   // holster each; they land in the wheel
-  ui_notify("all weapons given");
-}
-
-// ---- max upgrade all weapons ----
-// one functional "max" part per exclusive slot (longest barrel, extended clip/mag/tube, wide
-// iron sight, grip/stock, scope on bolt rifles). cosmetic variants and FRAME_VERTDATA are left
-// out (FRAME_VERTDATA breaks other parts' colors). component joaats from rdr3_discoveries.
-static const uint32_t UC_CATTLEMAN[]   = { 0xDC341AAFu, 0x7FD24272u, 0x1B0D8E5Bu };
-static const uint32_t UC_SCHOFIELD[]   = { 0xE4297827u, 0x3DC5FDB4u, 0x1AC7DA45u };
-static const uint32_t UC_DBLACTION[]   = { 0xF3F3B915u, 0x12CCC827u, 0x07B98DFAu };
-static const uint32_t UC_LEMAT[]       = { 0xDAF3F542u, 0xFFC04F8Cu, 0x1D3BC7CBu };
-static const uint32_t UC_VOLCANIC[]    = { 0x060E9CC0u, 0x50751553u, 0x9F63E06Fu };
-static const uint32_t UC_SEMIPISTOL[]  = { 0x1C1B73B5u, 0xAED91016u, 0x4996CF3Bu, 0x450D34A6u };
-static const uint32_t UC_MAUSER[]      = { 0x23EEE15Du, 0xD530C2F5u, 0x1A81703Bu, 0xB668EC21u };
-static const uint32_t UC_M1899[]       = { 0x6320A202u, 0xED5F4FD1u, 0x6E10FF97u, 0x1238DDA2u };
-static const uint32_t UC_CARBINE[]     = { 0x8E4EEB68u, 0xBE847594u, 0x841D047Eu, 0xF0155D7Bu };
-static const uint32_t UC_WINCHESTER[]  = { 0xC0039CB3u, 0x70E491BEu };
-static const uint32_t UC_HENRY[]       = { 0x70659657u, 0xBA8F2CB4u };
-static const uint32_t UC_EVANS[]       = { 0x992E47B8u, 0x19B9F165u };
-static const uint32_t UC_SPRINGFIELD[] = { 0x65768D87u, 0x97DB6895u, 0x920B56D7u };
-static const uint32_t UC_BOLTACTION[]  = { 0x4E58B5E0u, 0x4E2B941Cu, 0x920B56D7u };
-static const uint32_t UC_VARMINT[]     = { 0xFCEE9E62u, 0x6F011007u, 0xB2B1CA8Du };
-static const uint32_t UC_ROLLINGBLOCK[]= { 0x8D6E0798u, 0xDEE616DBu, 0x920B56D7u };
-static const uint32_t UC_CARCANO[]     = { 0x570DC440u, 0xEE3095C6u, 0x82A9B7B5u };
-static const uint32_t UC_SG_PUMP[]     = { 0xE8218EBCu, 0x16269609u, 0xADA238F1u, 0xF98B3538u };
-static const uint32_t UC_SG_DOUBLE[]   = { 0xA1371765u, 0xA2909F48u, 0x575F58BEu, 0x2D6A1AFCu };
-static const uint32_t UC_SG_SAWED[]    = { 0xF9AAA5A2u, 0xD2F83D2Du, 0xC69F8FC9u };
-static const uint32_t UC_SG_REPEAT[]   = { 0x59D6C67Fu, 0x95688A19u, 0xE963C18Fu };
-static const uint32_t UC_SG_SEMI[]     = { 0x79B1589Cu, 0xB57E782Du, 0x099EE88Fu };
-
-typedef struct { uint32_t weapon; const uint32_t *comps; unsigned n; } WeaponUpgrade;
-#define UG(w, arr) { (w), (arr), (unsigned)(sizeof(arr) / sizeof((arr)[0])) }
-static const WeaponUpgrade WEAPON_UPGRADES[] = {
-  UG(0x169F59F7u, UC_CATTLEMAN),   UG(0x7BBD1FF6u, UC_SCHOFIELD),
-  UG(0x0797FBF5u, UC_DBLACTION),   UG(0x5B2D26B5u, UC_LEMAT),
-  UG(0x020D13FFu, UC_VOLCANIC),    UG(0x657065D6u, UC_SEMIPISTOL),
-  UG(0x8580C63Eu, UC_MAUSER),      UG(0x5B78B8DDu, UC_M1899),
-  UG(0xF5175BA1u, UC_CARBINE),     UG(0xA84762ECu, UC_WINCHESTER),
-  UG(0x95B24592u, UC_HENRY),       UG(0x7194721Eu, UC_EVANS),
-  UG(0x63F46DE6u, UC_SPRINGFIELD), UG(0x772C8DD6u, UC_BOLTACTION),
-  UG(0xDDF7BC1Eu, UC_VARMINT),     UG(0xE1D2B317u, UC_ROLLINGBLOCK),
-  UG(0x53944780u, UC_CARCANO),     UG(0x31B7B9FEu, UC_SG_PUMP),
-  UG(0x6DFA071Bu, UC_SG_DOUBLE),   UG(0x1765A8F8u, UC_SG_SAWED),
-  UG(0x63CA782Au, UC_SG_REPEAT),   UG(0x6D9BB970u, UC_SG_SEMI),
-};
-#define NUPGRADES (sizeof(WEAPON_UPGRADES) / sizeof(WEAPON_UPGRADES[0]))
-
-static void max_upgrade_all_weapons(void) {
-  int ped = cur_ped(); if (!ped) return;
-  for (unsigned i = 0; i < NUPGRADES; i++) {
-    const WeaponUpgrade *u = &WEAPON_UPGRADES[i];
-    give_one_weapon(ped, u->weapon, 500, 0);   // must own the gun before a component attaches
-    // _GIVE_WEAPON_COMPONENT_TO_ENTITY(entity, componentHash, weaponHash, p3=1) - component THEN weapon
-    for (unsigned j = 0; j < u->n; j++)
-      nat_call(g_base, OFF__GIVE_WEAPON_COMPONENT_TO_ENTITY,
-               (uint64_t[]){(uint32_t)ped, u->comps[j], u->weapon, 1}, 4);
-  }
-  ui_notify("all weapons maxed");
-}
-
-static void give_all_ammo(void) {
-  int ped = cur_ped(); if (!ped) return;
-  for (unsigned i = 0; i < NWEAPONS; i++) {
-    uint32_t w = WEAPONS[i];
-    // own the weapon first - SET_PED_AMMO / GET_PED_AMMO_TYPE_FROM_WEAPON are no-ops on an unowned
-    // weapon (type resolves to 0), so the old refill never applied. give_one_weapon re-tops ammo.
-    give_one_weapon(ped, w, 500, 0);
-    nat_call(g_base, OFF__ENABLE_ALL_SPECIAL_AMMO_FOR_PED, (uint64_t[]){(uint32_t)ped, w}, 2);
-    uint32_t at = (uint32_t)nat_call(g_base, OFF_GET_PED_AMMO_TYPE_FROM_WEAPON, (uint64_t[]){(uint32_t)ped, w}, 2);
-    if (at) nat_call(g_base, OFF_SET_PED_AMMO_BY_TYPE, (uint64_t[]){(uint32_t)ped, at, 500}, 3); // shared pool
-    nat_call(g_base, OFF_SET_PED_AMMO, (uint64_t[]){(uint32_t)ped, w, 500}, 3);                  // per-weapon
-  }
-  ui_notify("ammo refilled");
-}
-
-// give the whole arsenal, then show the long guns on the horse saddle holsters
-static void give_all_weapons_to_horse(void) {
-  int ped = cur_ped(); if (!ped) return;
-  if (!(int)nat_call(g_base, OFF_IS_PED_ON_MOUNT, (uint64_t[]){(uint32_t)ped}, 1)) { ui_notify("mount a horse first"); return; }
-  int mount = (int)nat_call(g_base, OFF_GET_MOUNT, (uint64_t[]){(uint32_t)ped}, 1);
-  if (!mount) { ui_notify("mount a horse first"); return; }
-  for (unsigned i = 0; i < NWEAPONS; i++) give_one_weapon(ped, WEAPONS[i], 500, 0);
-  nat_call(g_base, OFF__DELETE_WEAPON_OBJECTS_ON_HORSE, (uint64_t[]){(uint32_t)mount}, 1); // clean rack first
-  // attach each long arm: (horse, weaponHash, ownerPed). saddle only shows ~2 at once, rest stay owned
-  for (unsigned i = 0; i < NLONGARMS; i++)
-    nat_call(g_base, OFF__ATTACH_WEAPON_TO_HORSE_HOLSTER, (uint64_t[]){(uint32_t)mount, LONGARMS[i], (uint32_t)ped}, 3);
-  ui_notify("weapons on the horse");
-}
-
-static void equip_semi_auto(void) {
-  int ped = cur_ped(); if (!ped) return;
-  give_one_weapon(ped, SEMIAUTO[0], 500, 1);   // primary drawn (forces stream+draw now)
-  for (unsigned i = 1; i < NSEMIAUTO; i++) give_one_weapon(ped, SEMIAUTO[i], 500, 0);
-  nat_call(g_base, OFF_SET_CURRENT_PED_WEAPON, (uint64_t[]){(uint32_t)ped, SEMIAUTO[0], 1, 0, 0, 0}, 6);
-}
-
-static void equip_best_weapons(void) {
-  int ped = cur_ped(); if (!ped) return;
-  int best = (int)nat_call(g_base, OFF_GET_BEST_PED_WEAPON, (uint64_t[]){(uint32_t)ped, 0, 0}, 3);
-  if (best) nat_call(g_base, OFF_SET_CURRENT_PED_WEAPON, (uint64_t[]){(uint32_t)ped, (uint32_t)best, 1, 0, 0, 0}, 6);
-}
-
-static void dual_wield_enable(void)  { int ped = cur_ped(); if (ped) nat_call(g_base, OFF__SET_ALLOW_DUAL_WIELD, (uint64_t[]){(uint32_t)ped, 1}, 2); }
-static void dual_wield_disable(void) { int ped = cur_ped(); if (ped) nat_call(g_base, OFF__SET_ALLOW_DUAL_WIELD, (uint64_t[]){(uint32_t)ped, 0}, 2); }
-static void take_all_weapons(void)   { int ped = cur_ped(); if (ped) nat_call(g_base, OFF_REMOVE_ALL_PED_WEAPONS, (uint64_t[]){(uint32_t)ped, 1, 1}, 3); }
-
-// wipes dirt, blood (body + face), wound decals and wetness off the player ped.
-// same chain the game's own bathing script runs (bathing.c): env dirt + decal zones +
-// blood damage + the _SET_PED_DIRT_CLEANED finisher which is what actually scrubs clothes.
-static void clean_player(void) {
-  int ped = cur_ped(); if (!ped) return;
-  nat_call(g_base, OFF_CLEAR_PED_ENV_DIRT, (uint64_t[]){(uint32_t)ped}, 1);
-  nat_call(g_base, OFF_CLEAR_PED_DAMAGE_DECAL_BY_ZONE,
-           (uint64_t[]){(uint32_t)ped, 10, (uint64_t)(uintptr_t)"ALL"}, 3);
-  nat_call(g_base, OFF_CLEAR_PED_BLOOD_DAMAGE, (uint64_t[]){(uint32_t)ped}, 1);
-  nat_call(g_base, OFF__CLEAR_PED_BLOOD_DAMAGE_FACIAL, (uint64_t[]){(uint32_t)ped, 0}, 2);
-  // per-zone scrub for the zones CLEAR_PED_BLOOD_DAMAGE can miss (face/hands/legs)
-  for (uint32_t z = 0; z < 10; z++)
-    nat_call(g_base, OFF_CLEAR_PED_BLOOD_DAMAGE_BY_ZONE, (uint64_t[]){(uint32_t)ped, z}, 2);
-  nat_call(g_base, OFF_CLEAR_PED_WETNESS, (uint64_t[]){(uint32_t)ped}, 1);
-  nat_call(g_base, OFF__SET_PED_DIRT_CLEANED, (uint64_t[]){(uint32_t)ped, fu(0.0f), (uint64_t)-1, 1, 1}, 5);
-  nat_call(g_base, OFF__SET_PED_DAMAGE_CLEANLINESS, (uint64_t[]){(uint32_t)ped, 2}, 2);
-  ui_notify("player cleaned");
-}
-
-// outfit page - wardrobe-style actions. each applies the shop-item components straight
-// onto the player ped (same flow the horse tack uses), then refreshes the variation.
-static void outfit_page(void) {
-  ui_title("Outfits");
-  ui_action("The Wittemore (High Honor)", equip_wittemore_blue);
-  ui_action("The Wittemore (Low Honor)",  equip_wittemore_red);
-  ui_submenu("Custom Clothing", custom_outfit_page);
-  ui_submenu("Beard & Face Hair", beard_page);
-}
-
-static int s_custom_idx[NOUTFIT_CATS];
-static int s_beard_idx[NOUTFIT_BEARDS];
-static void wear_component(int ped, uint32_t hash, int category) {
-  nat_call(g_base, OFF_REMOVE_SHOP_ITEM_FROM_PED_BY_CATEGORY,
-           (uint64_t[]){(uint32_t)ped, category, 0, 0}, 4);
-  nat_call(g_base, OFF__APPLY_SHOP_ITEM_TO_PED, (uint64_t[]){(uint32_t)ped, hash, 1, 0, 0}, 5);
-}
-
-static void refresh_clothing(int ped) {
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)ped, 0, 1, 1, 1, 0}, 6);
-  nat_call(g_base, OFF__SET_ACTIVE_META_PED_COMPONENTS_UPDATED, (uint64_t[]){(uint32_t)ped, 0}, 2);
-}
-
-static void apply_custom_category(int id) {
-  if (id < 0 || id >= (int)NOUTFIT_CATS) return;
-  int ped = cur_ped(); if (!ped) return;
-  const OutfitCategory *c = &OUTFIT_CATS[id];
-  if (c->n <= 0) return;
-  nat_call(g_base, OFF__REFRESH_META_PED_SHOP_ITEMS, (uint64_t[]){(uint32_t)ped, 1}, 2);
-  wear_component(ped, c->hash[s_custom_idx[id]], c->category);
-  refresh_clothing(ped);
-  ui_notify("clothing applied");
-}
-
-static void apply_beard_category(int id) {
-  if (id < 0 || id >= (int)NOUTFIT_BEARDS) return;
-  int ped = cur_ped(); if (!ped) return;
-  const OutfitCategory *c = &OUTFIT_BEARDS[id];
-  if (c->n <= 0) return;
-  nat_call(g_base, OFF__REFRESH_META_PED_SHOP_ITEMS, (uint64_t[]){(uint32_t)ped, 1}, 2);
-  wear_component(ped, c->hash[s_beard_idx[id]], c->category);
-  refresh_clothing(ped);
-  ui_notify("facial hair applied");
-}
-
-static void apply_custom_outfit(void) {
-  int ped = cur_ped(); if (!ped) return;
-  nat_call(g_base, OFF__REFRESH_META_PED_SHOP_ITEMS, (uint64_t[]){(uint32_t)ped, 1}, 2);
-  for (unsigned i = 0; i < NOUTFIT_CATS; i++) {
-    const OutfitCategory *c = &OUTFIT_CATS[i];
-    if (c->n > 0) wear_component(ped, c->hash[s_custom_idx[i]], c->category);
-  }
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)ped, 0, 1, 1, 1, 0}, 6);
-  nat_call(g_base, OFF__SET_ACTIVE_META_PED_COMPONENTS_UPDATED, (uint64_t[]){(uint32_t)ped, 0}, 2);
-  ui_notify("custom clothing applied");
-}
-
-static void custom_outfit_page(void) {
-  ui_title("Custom Clothing");
-  for (unsigned i = 0; i < NOUTFIT_CATS; i++) {
-    const OutfitCategory *c = &OUTFIT_CATS[i];
-    ui_scroll_opt_apply(c->label, &s_custom_idx[i], c->names, c->n,
-                        apply_custom_category, (int)i);
-  }
-  ui_action("Apply All Clothing", apply_custom_outfit);
-}
-
-static void apply_beards(void) {
-  int ped = cur_ped(); if (!ped) return;
-  nat_call(g_base, OFF__REFRESH_META_PED_SHOP_ITEMS, (uint64_t[]){(uint32_t)ped, 1}, 2);
-  for (unsigned i = 0; i < NOUTFIT_BEARDS; i++) {
-    const OutfitCategory *c = &OUTFIT_BEARDS[i];
-    if (c->n > 0) wear_component(ped, c->hash[s_beard_idx[i]], c->category);
-  }
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)ped, 0, 1, 1, 1, 0}, 6);
-  nat_call(g_base, OFF__SET_ACTIVE_META_PED_COMPONENTS_UPDATED, (uint64_t[]){(uint32_t)ped, 0}, 2);
-  ui_notify("facial hair applied");
-}
-
-static void clean_shave(void) {
-  int ped = cur_ped(); if (!ped) return;
-  for (unsigned i = 0; i < NOUTFIT_BEARDS; i++)
-    nat_call(g_base, OFF_REMOVE_SHOP_ITEM_FROM_PED_BY_CATEGORY,
-             (uint64_t[]){(uint32_t)ped, OUTFIT_BEARDS[i].category, 0, 0}, 4);
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)ped, 0, 1, 1, 1, 0}, 6);
-  ui_notify("clean shave");
-}
-
-static void beard_page(void) {
-  ui_title("Beard & Face Hair");
-  for (unsigned i = 0; i < NOUTFIT_BEARDS; i++) {
-    const OutfitCategory *c = &OUTFIT_BEARDS[i];
-    ui_scroll_opt_apply(c->label, &s_beard_idx[i], c->names, c->n,
-                        apply_beard_category, (int)i);
-  }
-  ui_action("Apply All Facial Hair", apply_beards);
-  ui_action("Clean Shave", clean_shave);
-}
-
-static void equip_wittemore(const uint32_t *comps) {
-  int ped = cur_ped(); if (!ped) return;
-  nat_call(g_base, OFF__REFRESH_META_PED_SHOP_ITEMS, (uint64_t[]){(uint32_t)ped, 1}, 2);
-  // remove the active item and category; the category call alone can leave a player
-  // suspenders component cached until the next variation rebuild.
-  for (unsigned i = 0; i < sizeof(OF_SUSPENDERS) / sizeof(OF_SUSPENDERS[0]); i++)
-    nat_call(g_base, OFF__REMOVE_SHOP_ITEM_FROM_PED,
-             (uint64_t[]){(uint32_t)ped, OF_SUSPENDERS[i], 0, 0}, 4);
-  nat_call(g_base, OFF_REMOVE_SHOP_ITEM_FROM_PED_BY_CATEGORY,
-           (uint64_t[]){(uint32_t)ped, HASH_SUSPENDERS, 0, 0}, 4);
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)ped, 0, 1, 1, 1, 0}, 6);
-  for (unsigned i = 0; i < NWITTEMORE; i++)
-    nat_call(g_base, OFF__APPLY_SHOP_ITEM_TO_PED, (uint64_t[]){(uint32_t)ped, comps[i], 1, 0, 0}, 5);
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)ped, 0, 1, 1, 1, 0}, 6);
-  nat_call(g_base, OFF__SET_ACTIVE_META_PED_COMPONENTS_UPDATED, (uint64_t[]){(uint32_t)ped, 0}, 2);
-  ui_notify("wittemore equipped");
-}
-static void equip_wittemore_blue(void) { equip_wittemore(WITTEMORE_BLUE); }
-static void equip_wittemore_red(void)  { equip_wittemore(WITTEMORE_RED); }
-
-static void self_kill(void) {
-  int player = cur_player();
-  int ped = cur_ped(); if (!ped) return;
-  // drop god first or the damage won't register
-  g_feat.god = 0;
-  apply_player_protection(g_base, player, ped);
-  nat_call(g_base, OFF_APPLY_DAMAGE_TO_PED, (uint64_t[]){(uint32_t)ped, 10000, 1, 0, (uint32_t)ped}, 5);
-  nat_call(g_base, OFF_SET_ENTITY_HEALTH, (uint64_t[]){(uint32_t)ped, 0, 0}, 3);
-}
-
-static void bonding_max(void) {
-  int ped = cur_ped(); if (!ped) return;
-  int mount = 0;
-  if ((int)nat_call(g_base, OFF_IS_PED_ON_MOUNT, (uint64_t[]){(uint32_t)ped}, 1))
-    mount = (int)nat_call(g_base, OFF_GET_MOUNT, (uint64_t[]){(uint32_t)ped}, 1);
-  if (!mount) mount = (int)nat_call(g_base, OFF__GET_SADDLE_HORSE_FOR_PLAYER, (uint64_t[]){(uint32_t)cur_player()}, 1);
-  if (!mount) { ui_notify("no horse found"); return; }
-  // the runtime bonding native alone snaps back; also write the backing attribute. PA_BONDING is
-  // attribute index 7, range 0-4 (4 = max).
-  nat_call(g_base, OFF_SET_ATTRIBUTE_BASE_RANK, (uint64_t[]){(uint32_t)mount, 7, 4}, 3);
-  nat_call(g_base, OFF__SET_MOUNT_BONDING_LEVEL, (uint64_t[]){(uint32_t)mount, 4}, 2);
-  ui_notify("bond maxed");
-}
-
-static void horse_shop(void) {
-  int ped = cur_ped(); if (!ped) return;
-  int mount = 0;
-  if ((int)nat_call(g_base, OFF_IS_PED_ON_MOUNT, (uint64_t[]){(uint32_t)ped}, 1))
-    mount = (int)nat_call(g_base, OFF_GET_MOUNT, (uint64_t[]){(uint32_t)ped}, 1);
-  if (!mount) mount = (int)nat_call(g_base, OFF__GET_SADDLE_HORSE_FOR_PLAYER, (uint64_t[]){(uint32_t)cur_player()}, 1);
-  if (!mount) { ui_notify("no horse found"); return; }
-  nat_call(g_base, OFF__REFRESH_META_PED_SHOP_ITEMS, (uint64_t[]){(uint32_t)mount, 0}, 2);
-  for (unsigned i = 0; i < NTACK; i++) {
-    nat_call(g_base, OFF__APPLY_SHOP_ITEM_TO_PED, (uint64_t[]){(uint32_t)mount, TACK[i], 0, 0, 0}, 5); // sp
-    nat_call(g_base, OFF__APPLY_SHOP_ITEM_TO_PED, (uint64_t[]){(uint32_t)mount, TACK[i], 0, 1, 0}, 5); // mp
-  }
-  nat_call(g_base, OFF__UPDATE_PED_VARIATION, (uint64_t[]){(uint32_t)mount, 0, 1, 1, 1, 0}, 6);
-  nat_call(g_base, OFF__SET_ACTIVE_META_PED_COMPONENTS_UPDATED, (uint64_t[]){(uint32_t)mount, 0}, 2);
-  ui_notify("tack applied");
-}
-
-// ---- money / weather / time ----
-static void money_page(void) {
-  ui_title("Money");
-  ui_scroll_opt("Amount", &s_money_idx, MONEY_LABELS, (int)NMONEY);
-  ui_action("Add Money", money_add);
-  ui_action("Remove Money", money_remove);
-}
-static void money_add(void) {
-  int cents = MONEY_AMOUNTS[s_money_idx] * 100;
-  nat_call(g_base, OFF__MONEY_INCREMENT_CASH_BALANCE, (uint64_t[]){(uint32_t)cents, ADD_REASON_DEFAULT}, 2);
-  ui_notify("money added");
-}
-static void money_remove(void) {
-  int cents = MONEY_AMOUNTS[s_money_idx] * 100;
-  int bal = (int)nat_call(g_base, OFF__MONEY_GET_CASH_BALANCE, 0, 0); // balance in cents
-  if (cents > bal) cents = bal;                                       // clamp at 0
-  if (cents > 0) nat_call(g_base, OFF__MONEY_DECREMENT_CASH_BALANCE, (uint64_t[]){(uint32_t)cents}, 1);
-  ui_notify("money removed");
-}
-
-static void worldtime_page(void) {
-  ui_title("Weather & Time");
-  ui_scroll_opt("Weather", &s_weather_idx, WEATHER_NAMES, (int)NWEATHER);
-  ui_action("Apply Weather", apply_weather);
-  ui_scroll_int("Hour", &s_hour, 0, 23, 1);
-  ui_scroll_int("Minute", &s_minute, 0, 59, 1);
-  ui_action("Apply Time", apply_time);
-  ui_toggle("Freeze Time", &g_feat.freeze_time);
-}
-static void apply_weather(void) {
-  uint32_t w = WEATHER_HASHES[s_weather_idx];
-  nat_call(g_base, OFF_SET_CURR_WEATHER_STATE, (uint64_t[]){w, w, fu(0.0f), 1}, 4); // instant snap
-  nat_call(g_base, OFF_SET_WEATHER_TYPE, (uint64_t[]){w, 1, 1, 1, fu(0.0f), 0}, 6); // force it
-  ui_notify("weather set");
-}
-static void apply_time(void) {
-  nat_call(g_base, OFF_SET_CLOCK_TIME, (uint64_t[]){(uint32_t)s_hour, (uint32_t)s_minute, 0}, 3);
-  ui_notify("time set");
 }
