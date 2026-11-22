@@ -455,7 +455,6 @@ static void weapon_page(void) {
   ui_action("Max Upgrade All Weapons", max_upgrade_all_weapons);
   ui_toggle("Infinite Ammo", &g_feat.infinite_ammo);
   ui_toggle("One Hit Kill", &g_feat.one_hit_kill);
-  ui_toggle("Teleport Gun", &g_feat.teleport_gun);
   ui_toggle("Rapid Fire (exp)", &g_feat.rapid_fire);
   ui_toggle("Perfect Accuracy (exp)", &g_feat.perfect_accuracy);
   ui_toggle("Explosive Bullet (exp)", &g_feat.explosive_bullet);
@@ -573,13 +572,9 @@ void features_apply_all(uint64_t base) {
   if (g_feat.one_hit_kill && ped)
     nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
 
-  // teleport gun
-  if (g_feat.teleport_gun && ped)
-    nat_call(base, OFF_SET_PED_SHOOT_RANGE, (uint64_t[]){(uint32_t)ped, 500.0f}, 2);
-
   // rapid fire
   if (g_feat.rapid_fire && ped)
-    nat_call(base, OFF_SET_PED_SHOOT_RATE, (uint64_t[]){(uint32_t)ped, 0.05f}, 2);
+    nat_call(base, OFF_SET_PED_SHOOT_RATE, (uint64_t[]){(uint32_t)ped, fu(0.05f)}, 2);   
 
   // perfect accuracy
   if (g_feat.perfect_accuracy && ped)
