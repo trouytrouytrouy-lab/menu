@@ -221,14 +221,12 @@ static void apply_player_protection(uint64_t base, int player, int ped) {
 #define MAX_GUARDS 8
 
 static const uint32_t GUARD_PED_HASHES[] = {
-  0x0E05302Fu, // lawman / deputy style ped hash (verify)
-  0x60A6D6C0u, // gang gunman style ped hash (verify)
-  0x2B9C5C84u, // townsman / armed npc hash (verify)
+  0x93B09465u, // U_M_M_ValSheriff_01
+  0x2B0C75A7u, // S_M_M_Army_01
 };
 static const char *const GUARD_PED_NAMES[] = {
-  "Lawman",
-  "Gang Gunman",
-  "Townsman",
+  "Valentine Sheriff",
+  "Army Soldier",
 };
 #define NGUARD_PEDS (sizeof(GUARD_PED_HASHES) / sizeof(GUARD_PED_HASHES[0]))
 
@@ -561,110 +559,4 @@ void features_apply_all(uint64_t base) {
   }
 
   // player ignore
-  if (g_feat.player_ignore)     nat_call(base, OFF_SET_EVERYONE_IGNORE_PLAYER, (uint64_t[]){(uint32_t)player, 1}, 2);
-  else if (prev.player_ignore)  nat_call(base, OFF_SET_EVERYONE_IGNORE_PLAYER, (uint64_t[]){(uint32_t)player, 0}, 2);
-
-  // infinite ammo
-  if (g_feat.infinite_ammo && ped) {
-    nat_call(base, OFF__SET_PED_INFINITE_AMMO_CLIP, (uint64_t[]){(uint32_t)ped, 1}, 2);
-    for (unsigned i = 0; i < NWEAPONS; i++)
-      nat_call(base, OFF_SET_PED_INFINITE_AMMO, (uint64_t[]){(uint32_t)ped, 1, WEAPONS[i]}, 3);
-  } else if (prev.infinite_ammo && ped) {
-    nat_call(base, OFF__SET_PED_INFINITE_AMMO_CLIP, (uint64_t[]){(uint32_t)ped, 0}, 2);
-    for (unsigned i = 0; i < NWEAPONS; i++)
-      nat_call(base, OFF_SET_PED_INFINITE_AMMO, (uint64_t[]){(uint32_t)ped, 0, WEAPONS[i]}, 3);
-  }
-
-  // one hit kill
-  if (g_feat.one_hit_kill)      nat_call(base, OFF_SET_PLAYER_WEAPON_DAMAGE_MODIFIER, (uint64_t[]){(uint32_t)player, fu(1000.0f)}, 2);
-  else if (prev.one_hit_kill)   nat_call(base, OFF_SET_PLAYER_WEAPON_DAMAGE_MODIFIER, (uint64_t[]){(uint32_t)player, fu(1.0f)}, 2);
-
-  // rapid fire
-  if (g_feat.rapid_fire) {
-    nat_call(base, OFF_SET_PED_SHOOT_RATE, (uint64_t[]){(uint32_t)ped, 1000}, 2);
-    nat_call(base, OFF_SET_PED_FIRING_PATTERN, (uint64_t[]){(uint32_t)ped, FIRING_PATTERN_FULL_AUTO}, 2);
-  }
-
-  // perfect accuracy
-  if (g_feat.perfect_accuracy) {
-    nat_call(base, OFF__SET_PLAYER_TOTAL_ACCURACY_MODIFIER, (uint64_t[]){(uint32_t)player, fu(100.0f)}, 2);
-    nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
-  } else if (prev.perfect_accuracy) {
-    nat_call(base, OFF__SET_PLAYER_TOTAL_ACCURACY_MODIFIER, (uint64_t[]){(uint32_t)player, fu(1.0f)}, 2);
-  }
-
-  // explosive bullet
-  {
-    static float eb_lx, eb_ly, eb_lz; static int eb_primed;
-    if (g_feat.explosive_bullet && ped) {
-      if (!prev.explosive_bullet) eb_primed = 0;
-      ScrVec3 c; memset(&c, 0, sizeof c);
-      int hit = (int)nat_call(base, OFF_GET_PED_LAST_WEAPON_IMPACT_COORD,
-                              (uint64_t[]){(uint32_t)ped, (uint64_t)(uintptr_t)&c}, 2);
-      if (hit && (!eb_primed || c.x != eb_lx || c.y != eb_ly || c.z != eb_lz)) {
-        if (eb_primed)
-          nat_call(base, OFF_ADD_OWNED_EXPLOSION,
-            (uint64_t[]){(uint32_t)ped, fu(c.x), fu(c.y), fu(c.z), 25, fu(1.0f), 1, 0, fu(1.0f)}, 9);
-        eb_lx = c.x; eb_ly = c.y; eb_lz = c.z; eb_primed = 1;
-      }
-    } else {
-      eb_primed = 0;
-    }
-  }
-
-  // teleport gun
-  {
-    static float tg_lx, tg_ly, tg_lz; static int tg_primed;
-    if (g_feat.teleport_gun && ped) {
-      if (!prev.teleport_gun) tg_primed = 0;
-      ScrVec3 c; memset(&c, 0, sizeof c);
-      int hit = (int)nat_call(base, OFF_GET_PED_LAST_WEAPON_IMPACT_COORD,
-                              (uint64_t[]){(uint32_t)ped, (uint64_t)(uintptr_t)&c}, 2);
-      if (hit && (!tg_primed || c.x != tg_lx || c.y != tg_ly || c.z != tg_lz)) {
-        if (tg_primed)
-          nat_call(base, OFF_SET_ENTITY_COORDS,
-            (uint64_t[]){(uint32_t)ped, fu(c.x), fu(c.y), fu(c.z + 1.0f), 0, 0, 0, 0}, 8);
-        tg_lx = c.x; tg_ly = c.y; tg_lz = c.z; tg_primed = 1;
-      }
-    } else {
-      tg_primed = 0;
-    }
-  }
-
-  // ---- horse: resolve the mount, apply to it ----
-  int anyHorse = g_feat.horse_unlimited_stamina || g_feat.horse_god ||
-                 g_feat.horse_invisible || g_feat.horse_super_run ||
-                 prev.horse_god || prev.horse_invisible || prev.horse_unlimited_stamina;
-  int mount = 0;
-  if (anyHorse && ped &&
-      (int)nat_call(base, OFF_IS_PED_ON_MOUNT, (uint64_t[]){(uint32_t)ped}, 1)) {
-    mount = (int)nat_call(base, OFF_GET_MOUNT, (uint64_t[]){(uint32_t)ped}, 1);
-  }
-  int protectedHorse = mount;
-  if (!protectedHorse && ped && (g_feat.horse_god || g_feat.horse_unlimited_stamina)) {
-    protectedHorse = s_horse_protection.ped;
-    if (!entity_exists(base, protectedHorse))
-      protectedHorse = (int)nat_call(base, OFF__GET_SADDLE_HORSE_FOR_PLAYER, (uint64_t[]){(uint32_t)player}, 1);
-  }
-  apply_ped_protection(base, &s_horse_protection, protectedHorse,
-                       g_feat.horse_god, g_feat.horse_unlimited_stamina);
-
-  if (mount) {
-    if (g_feat.horse_invisible)       nat_call(base, OFF_SET_ENTITY_ALPHA, (uint64_t[]){(uint32_t)mount, 0, 0}, 3);
-    else if (prev.horse_invisible)    nat_call(base, OFF_RESET_ENTITY_ALPHA, (uint64_t[]){(uint32_t)mount}, 1);
-
-    if (g_feat.horse_super_run &&
-        !(int)nat_call(base, OFF_IS_PED_RAGDOLL, (uint64_t[]){(uint32_t)mount}, 1) &&
-        ((int)nat_call(base, OFF_IS_PED_RUNNING,   (uint64_t[]){(uint32_t)mount}, 1) ||
-         (int)nat_call(base, OFF_IS_PED_SPRINTING, (uint64_t[]){(uint32_t)mount}, 1)))
-      nat_call(base, OFF_APPLY_FORCE_TO_ENTITY,
-        (uint64_t[]){(uint32_t)mount, 1, fu(0.0f), fu(20.0f), fu(0.0f), fu(0.0f), fu(0.0f), fu(0.0f),
-                     1, 1, 1, 1, 0, 1}, 14);
-  }
-
-  // freeze time
-  if (g_feat.freeze_time && !prev.freeze_time) nat_call(base, OFF_PAUSE_CLOCK, (uint64_t[]){1, 0}, 2);
-  else if (!g_feat.freeze_time && prev.freeze_time) nat_call(base, OFF_PAUSE_CLOCK, (uint64_t[]){0, 0}, 2);
-
-  prev = g_feat;
-}
+  if
