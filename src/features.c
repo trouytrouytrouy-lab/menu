@@ -324,7 +324,6 @@ static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float 
   nat_call(g_base, OFF_SET_MODEL_AS_NO_LONGER_NEEDED, (uint64_t[]){model_hash}, 1);
   return ped;
 }
-}
 
 static void give_one_weapon(int ped, uint32_t w, int ammo, int inHand) {
   nat_call(g_base, OFF_GIVE_WEAPON_TO_PED,
