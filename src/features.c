@@ -558,4 +558,32 @@ void features_apply_all(uint64_t base) {
   }
 
   // player ignore
-  if
+  if (g_feat.player_ignore && ped)
+    nat_call(base, OFF_SET_EVERYONE_IGNORE_PLAYER, (uint64_t[]){(uint32_t)player, 1}, 2);
+  else if (prev.player_ignore && ped)
+    nat_call(base, OFF_SET_EVERYONE_IGNORE_PLAYER, (uint64_t[]){(uint32_t)player, 0}, 2);
+
+  // infinite ammo
+  if (g_feat.infinite_ammo && ped)
+    nat_call(base, OFF_SET_PED_INFINITE_AMMO_CLIP, (uint64_t[]){(uint32_t)ped, 1}, 2);
+  else if (prev.infinite_ammo && ped)
+    nat_call(base, OFF_SET_PED_INFINITE_AMMO_CLIP, (uint64_t[]){(uint32_t)ped, 0}, 2);
+
+  // one hit kill
+  if (g_feat.one_hit_kill && ped)
+    nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
+
+  // teleport gun
+  if (g_feat.teleport_gun && ped)
+    nat_call(base, OFF_SET_PED_SHOOT_RANGE, (uint64_t[]){(uint32_t)ped, 500.0f}, 2);
+
+  // rapid fire
+  if (g_feat.rapid_fire && ped)
+    nat_call(base, OFF_SET_PED_SHOOT_RATE, (uint64_t[]){(uint32_t)ped, 0.05f}, 2);
+
+  // perfect accuracy
+  if (g_feat.perfect_accuracy && ped)
+    nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
+
+  prev = g_feat;
+}   
