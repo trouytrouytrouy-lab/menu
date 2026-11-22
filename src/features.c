@@ -295,19 +295,20 @@ static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float 
   int player_ped = cur_ped();
   if (!player_ped || !model_hash) return 0;
 
-    float x, y, z;
+  float x, y, z;
   nat_call(g_base, OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS,
     (uint64_t[]){(uint32_t)player_ped, fu(side_dist), fu(forward_dist), fu(0.0f),
-                 (uint64_t)(uintptr_t)&x, (uint64_t)(uintptr_t)&y, (uint64_t)(uintptr_t)&z}, 7);   
+                 (uint64_t)(uintptr_t)&x, (uint64_t)(uintptr_t)&y, (uint64_t)(uintptr_t)&z}, 7);
 
   nat_call(g_base, OFF_REQUEST_MODEL, (uint64_t[]){model_hash}, 1);
 
   int loaded = 0;
-  for (int tries = 0; tries < 120; tries++) {
+  for (int tries = 0; tries < 600; tries++) {
     if ((int)nat_call(g_base, OFF_HAS_MODEL_LOADED, (uint64_t[]){model_hash}, 1)) {
       loaded = 1;
       break;
     }
+    (void)nat_call(g_base, OFF_GET_FRAME_COUNT, 0, 0);
   }
   if (!loaded) {
     ui_notify("ped model failed to load");
@@ -316,12 +317,13 @@ static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float 
 
   int ped = (int)nat_call(g_base, OFF_CREATE_PED,
     (uint64_t[]){
-            model_hash, fu(x), fu(y), fu(z),   
+      model_hash, fu(x), fu(y), fu(z),
       fu(0.0f), 1, 1, 0, 0
     }, 9);
 
   nat_call(g_base, OFF_SET_MODEL_AS_NO_LONGER_NEEDED, (uint64_t[]){model_hash}, 1);
   return ped;
+}
 }
 
 static void give_one_weapon(int ped, uint32_t w, int ammo, int inHand) {
@@ -579,7 +581,7 @@ void features_apply_all(uint64_t base) {
     nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
     // max honor
   if (g_feat.honor_max && ped)
-    nat_call(base, OFF__SET_HONOR_LEVEL, (uint64_t[]){(uint32_t)player, 0x2Au}, 2);   
+    nat_call(base, OFF__SET_HONOR_LEVEL, (uint64_t[]){0x2Au}, 1);      
 
   prev = g_feat;
 }   
