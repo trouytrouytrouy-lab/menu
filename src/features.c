@@ -579,6 +579,9 @@ void features_apply_all(uint64_t base) {
   // perfect accuracy
   if (g_feat.perfect_accuracy && ped)
     nat_call(base, OFF_SET_PED_ACCURACY, (uint64_t[]){(uint32_t)ped, 100}, 2);
+    // max honor
+  if (g_feat.honor_max && ped)
+    nat_call(base, OFF__SET_HONOR_LEVEL, (uint64_t[]){(uint32_t)player, 0x2Au}, 2);   
 
   prev = g_feat;
 }   
