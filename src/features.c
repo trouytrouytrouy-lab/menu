@@ -440,6 +440,7 @@ static void player_page(void) {
   ui_submenu("Outfits", outfit_page);
   ui_action("Clean Player", clean_player);
   ui_action("Self Kill", self_kill);
+  ui_toggle("Max Honor", &g_feat.honor_max);   
 }
 
 static void weapon_page(void) {
