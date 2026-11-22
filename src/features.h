@@ -4,7 +4,7 @@
 typedef struct {
   // player toggles
   int god, no_satchel, never_wanted, super_run, super_swim, super_jump,
-      invisible, slow_motion, unlimited_stamina, unlimited_deadeye, player_ignore;
+      invisible, slow_motion, unlimited_stamina, unlimited_deadeye, player_ignore, honor_max;
   // weapon toggles
   int infinite_ammo, one_hit_kill, rapid_fire, perfect_accuracy, explosive_bullet;
   // horse toggles
