@@ -298,10 +298,10 @@ static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float 
   int player_ped = cur_ped();
   if (!player_ped || !model_hash) return 0;
 
-  ScrVec3 pos;
-  memset(&pos, 0, sizeof pos);
+    float x, y, z;
   nat_call(g_base, OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS,
-    (uint64_t[]){(uint32_t)player_ped, fu(side_dist), fu(forward_dist), fu(0.0f), (uint64_t)(uintptr_t)&pos}, 5);
+    (uint64_t[]){(uint32_t)player_ped, fu(side_dist), fu(forward_dist), fu(0.0f),
+                 (uint64_t)(uintptr_t)&x, (uint64_t)(uintptr_t)&y, (uint64_t)(uintptr_t)&z}, 7);   
 
   nat_call(g_base, OFF_REQUEST_MODEL, (uint64_t[]){model_hash}, 1);
 
