@@ -1,24 +1,11 @@
-#pragma once
-#include <stdint.h>
-
-typedef struct {
-  // player toggles
-  int god, no_satchel, never_wanted, super_run, super_swim, super_jump,
-      invisible, slow_motion, unlimited_stamina, unlimited_deadeye, player_ignore;
-  // weapon toggles
-  int infinite_ammo, one_hit_kill, teleport_gun, rapid_fire, perfect_accuracy, explosive_bullet;
-  // horse toggles
-  int horse_unlimited_stamina, horse_god, horse_invisible, horse_super_run;
-  // guard toggles
-  int guard_god_mode;
-  // world
-  int freeze_time;
-  // outfit state: 0=off, 1=high honor, 2=low honor
-  int wittemore_variant;
-} FeatureState;
-
-extern FeatureState g_feat;
-
-void features_apply_all(uint64_t base);   // every frame from main.c tick
-void features_build_root(void);           // ui_set_root(features_build_root)
-void features_cleanup(void);              // clean up spawned guards when needed
+// ped spawning, model streaming & guard/combat AI (resolve from CUSA08519 1.32 eboot.bin)
+#define OFF_REQUEST_MODEL                        0x0ULL // REQUEST_MODEL
+#define OFF_HAS_MODEL_LOADED                     0x0ULL // HAS_MODEL_LOADED
+#define OFF_SET_MODEL_AS_NO_LONGER_NEEDED        0x0ULL // SET_MODEL_AS_NO_LONGER_NEEDED
+#define OFF_CREATE_PED                           0x0ULL // CREATE_PED
+#define OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS 0x0ULL // GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS
+#define OFF_SET_BLOCKING_OF_NON_TEMPORARY_EVENTS 0x0ULL // SET_BLOCKING_OF_NON_TEMPORARY_EVENTS
+#define OFF_SET_PED_COMBAT_ATTRIBUTES            0x0ULL // SET_PED_COMBAT_ATTRIBUTES
+#define OFF_SET_PED_COMBAT_ABILITY                 0x0ULL // SET_PED_COMBAT_ABILITY
+#define OFF_TASK_FOLLOW_TO_OFFSET_OF_ENTITY      0x0ULL // TASK_FOLLOW_TO_OFFSET_OF_ENTITY
+#define OFF_DELETE_PED                           0x0ULL // DELETE_PED
