@@ -94,3 +94,12 @@
 #define OFF_PLAYER_ID                                       0x21bdaa0ULL   // 0x217E9DC48139933D PLAYER_ID
 #define OFF_PLAYER_PED_ID                                   0x21bdac0ULL   // 0x096275889B8E0EE0 PLAYER_PED_ID
 #define OFF_SET_PLAYER_INVINCIBLE                           0x21be1c0ULL   // 0xFEBEEBC9CBDF4B12 SET_
+#define OFF_REQUEST_MODEL                                 0x22310B0ULL   // REQUEST_MODEL
+#define OFF_HAS_MODEL_LOADED                              0x22310D0ULL   // HAS_MODEL_LOADED
+#define OFF_CREATE_PED                                    0x2110C60ULL   // CREATE_PED
+#define OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS        0x1E5C880ULL   // GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS
+#define OFF_SET_BLOCKING_OF_NON_TEMPORARY_EVENTS          0x2128060ULL   // SET_BLOCKING_OF_NON_TEMPORARY_EVENTS
+#define OFF_SET_PED_COMBAT_ATTRIBUTES                     0x2133820ULL   // SET_PED_COMBAT_ATTRIBUTES
+#define OFF_SET_PED_COMBAT_ABILITY                        0x2133A00ULL   // SET_PED_COMBAT_ABILITY
+#define OFF_TASK_FOLLOW_TO_OFFSET_OF_ENTITY               0x22DD4D0ULL   // TASK_FOLLOW_TO_OFFSET_OF_ENTITY
+#define OFF_DELETE_PED                                    0x2110CC0ULL   // DELETE_PED   
