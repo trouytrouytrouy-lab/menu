@@ -9,6 +9,8 @@ typedef struct {
   int infinite_ammo, one_hit_kill, teleport_gun, rapid_fire, perfect_accuracy, explosive_bullet;
   // horse toggles
   int horse_unlimited_stamina, horse_god, horse_invisible, horse_super_run;
+  // guard toggles
+  int guard_god_mode;
   // world
   int freeze_time;
   // outfit state: 0=off, 1=high honor, 2=low honor
@@ -19,3 +21,4 @@ extern FeatureState g_feat;
 
 void features_apply_all(uint64_t base);   // every frame from main.c tick
 void features_build_root(void);           // ui_set_root(features_build_root)
+void features_cleanup(void);              // clean up spawned guards when needed
