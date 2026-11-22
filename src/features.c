@@ -498,23 +498,7 @@ void features_apply_all(uint64_t base) {
       set_entity_god(base, s_guards[i], g_feat.guard_god_mode ? 1 : 0);
     }
   }
-// ---- stubs (restore real implementations from backup when available) ----
-static void money_page(void) { ui_title("Money"); }
-static void worldtime_page(void) { ui_title("Weather & Time"); }
-static void outfit_page(void) { ui_title("Outfits"); }
-static void clean_player(void) {}
-static void self_kill(void) {}
-static void give_all_weapons(void) {}
-static void give_all_ammo(void) {}
-static void give_all_weapons_to_horse(void) {}
-static void equip_semi_auto(void) {}
-static void equip_best_weapons(void) {}
-static void dual_wield_enable(void) {}
-static void dual_wield_disable(void) {}
-static void take_all_weapons(void) {}
-static void max_upgrade_all_weapons(void) {}
-static void bonding_max(void) {}
-static void horse_shop(void) {}   
+  
   // remove satchel - self-limiting strip chain, gated on the component check
   if (g_feat.no_satchel && ped &&
       (int)nat_call(base, OFF__IS_META_PED_USING_COMPONENT, (uint64_t[]){(uint32_t)ped, HASH_SATCHELS}, 2)) {
@@ -598,3 +582,20 @@ static void horse_shop(void) {}
 
   prev = g_feat;
 }   
+// ---- stubs (restore real implementations from backup when available) ----
+static void money_page(void) { ui_title("Money"); }
+static void worldtime_page(void) { ui_title("Weather & Time"); }
+static void outfit_page(void) { ui_title("Outfits"); }
+static void clean_player(void) {}
+static void self_kill(void) {}
+static void give_all_weapons(void) {}
+static void give_all_ammo(void) {}
+static void give_all_weapons_to_horse(void) {}
+static void equip_semi_auto(void) {}
+static void equip_best_weapons(void) {}
+static void dual_wield_enable(void) {}
+static void dual_wield_disable(void) {}
+static void take_all_weapons(void) {}
+static void max_upgrade_all_weapons(void) {}
+static void bonding_max(void) {}
+static void horse_shop(void) {}
