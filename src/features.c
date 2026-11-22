@@ -395,8 +395,7 @@ static void action_clear_guards(void) {
     int ped = s_guards[i];
     if (entity_exists(g_base, ped)) {
       set_entity_god(g_base, ped, 0);
-      nat_call(g_base, OFF_DELETE_PED, (uint64_t[]){(uint64_t)(uintptr_t)&s_guards[i]}, 1);
-    }
+nat_call(g_base, OFF_DELETE_PED, (uint64_t[]){(uint32_t)s_guards[i]}, 1);       }
   }
   s_guard_count = 0;
   ui_notify("guards cleared");
