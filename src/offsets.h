@@ -116,3 +116,4 @@
 #define OFF_SET_PED_INFINITE_AMMO_CLIP                    0x23F4F50ULL   // SET_PED_INFINITE_AMMO_CLIP   
 #define OFF__MODIFY_INFINITE_TRAIL_VISION                 0x21BFA20ULL   // _MODIFY_INFINITE_TRAIL_VISION
 #define OFF__BG_DISPLAY_TEXT                              0x2313AA0ULL   // _BG_DISPLAY_TEXT   
+#define OFF__SET_HONOR_LEVEL                              0x1D572C0ULL   // _0x1407F5115FB9583E (hono   
