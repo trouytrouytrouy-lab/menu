@@ -295,10 +295,20 @@ static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float 
   int player_ped = cur_ped();
   if (!player_ped || !model_hash) return 0;
 
+   uint64_t args[7];
+  args[0] = (uint32_t)player_ped;
+  args[1] = fu(side_dist);
+  args[2] = fu(forward_dist);
+  args[3] = fu(0.0f);
+  args[4] = 0;  // out x
+  args[5] = 0;  // out y
+  args[6] = 0;  // out z
+  nat_call(g_base, OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS, args, 7);
+
   float x, y, z;
-  nat_call(g_base, OFF_GET_OFFSET_FROM_ENTITY_IN_WORLD_COORDS,
-    (uint64_t[]){(uint32_t)player_ped, fu(side_dist), fu(forward_dist), fu(0.0f),
-                 (uint64_t)(uintptr_t)&x, (uint64_t)(uintptr_t)&y, (uint64_t)(uintptr_t)&z}, 7);
+  memcpy(&x, &args[4], 4);
+  memcpy(&y, &args[5], 4);
+  memcpy(&z, &args[6], 4);   
 
   nat_call(g_base, OFF_REQUEST_MODEL, (uint64_t[]){model_hash}, 1);
 
