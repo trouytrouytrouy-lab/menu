@@ -12,9 +12,6 @@ FeatureState g_feat = {0};
 // pack a float into the low 32 bits of a native arg slot
 static inline uint64_t fu(float f) { union { float f; uint32_t u; } x; x.f = f; return (uint64_t)x.u; }
 
-// rage scrVector3: components sit in their own 8-byte slots (x@0, y@8, z@16). VERIFY layout on-console
-typedef struct { float x; uint32_t _p0; float y; uint32_t _p1; float z; uint32_t _p2; } ScrVec3;
-
 // firing-pattern joaat used by rapid fire. VERIFY
 #define FIRING_PATTERN_FULL_AUTO 0xC6EE6B4Cu
 
@@ -319,7 +316,7 @@ static int spawn_ped_near_player(uint32_t model_hash, float forward_dist, float 
 
   int ped = (int)nat_call(g_base, OFF_CREATE_PED,
     (uint64_t[]){
-      model_hash, fu(pos.x), fu(pos.y), fu(pos.z),
+            model_hash, fu(x), fu(y), fu(z),   
       fu(0.0f), 1, 1, 0, 0
     }, 9);
 
